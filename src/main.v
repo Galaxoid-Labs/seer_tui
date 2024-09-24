@@ -7,59 +7,24 @@ import time
 struct App {
 mut:
     tui                 &tui.Context = unsafe { nil }
+
     input               string
     input_height        int = 1
+
     groups              map[string]Group
     current_group_id    string
+
     messages            []TermMessage
-    last_commands       []string
     msg_channel         chan TermMessage
     max_messages        int = 100 // We only keep 100 messages in the buffer
-    ws                  &websocket.Client = unsafe { nil }
-}
 
-pub const default_format = '\x00'.bytes()[0]
-pub const blue_format = '\x10'.bytes()[0]
-pub const yellow_format = '\x20'.bytes()[0]
-pub const red_format = '\x30'.bytes()[0]
-pub const bold_default_format = '\x80'.bytes()[0]
-pub const bold_blue_format = '\x90'.bytes()[0]
-pub const bold_yellow_format = '\xA0'.bytes()[0]
-pub const bold_red_format = '\xB0'.bytes()[0]
+    last_commands       []string
 
-pub const color_black = tui.Color{r: 0, g: 0, b: 0}
-pub const color_green = tui.Color{r: 0, g: 228, b: 54}
-pub const color_blue = tui.Color{r: 41, g: 173, b: 255}
-pub const color_yellow = tui.Color{r: 255, g: 236, b: 39} 
-pub const color_red = tui.Color{r: 255, g: 0, b: 77} 
+    uri_chat            string 
+    ws_chat             &websocket.Client = unsafe { nil }
 
-// header \x00 - Default: No bold, normal color
-// header \x10 - No bold, green color
-// header \x20 - No bold, yellow color
-// header \x30 - No bold, red color
-// header \x80 - Bold, normal color
-// header \x90 - Bold, green color
-// header \xA0 - Bold, yellow color
-// header \xB0 - Bold, red color
-struct TermMessage {
-    mut:
-        label string
-        message string
-        header string  // Should only be single byte
-}
-
-fn (tm TermMessage) combined() string {
-    return '${tm.label} ${tm.message}'
-}
-
-fn (tm TermMessage) combined_with_header() string {
-    return '${tm.header}${tm.label} ${tm.message}'
-}
-
-fn parse_format(header u8) (bool, int) {
-    is_bold := (header & 0b10000000) != 0
-	color_code := (header & 0b01110000) >> 4
-	return is_bold, color_code
+    // uri_metadata        string
+    // ws_metadata         &websocket.Client = unsafe { nil }
 }
 
 fn main() {
@@ -77,9 +42,14 @@ fn main() {
         frame_rate:     30
     )
 
-    spawn connect(mut app)
+    app.msg_channel <- TermMessage{
+        label: '[ ${time.now().hhmm12()}]'
+        message: 'Welcome to seer_tui!! Get started by checking out the commands. Type /help'
+        header: '\x90'
+    }
 
     app.tui.run() or { 
+        eprintln(err)
         panic(err)
     }
 }
@@ -206,35 +176,17 @@ fn frame(a voidptr) {
     mut y := start_y
     for i in start_line .. total_lines {
         header := all_lines[i][0]
+        is_bold, color_code := parse_format(header)
+        if is_bold {
+            app.tui.bold()
+        }
 
-        match header {
-            default_format {
-                app.tui.reset()
-            }
-            blue_format {
-                app.tui.set_color(color_blue)
-            }
-            yellow_format {
-                app.tui.set_color(color_yellow)
-            }
-            red_format {
-                app.tui.set_color(color_red)
-            }
-            bold_blue_format {
-                app.tui.bold()
-                app.tui.set_color(color_blue)
-            }
-            bold_yellow_format {
-                app.tui.bold()
-                app.tui.set_color(color_yellow)
-            }
-            bold_red_format {
-                app.tui.bold()
-                app.tui.set_color(color_red)
-            }
-            else {
-                app.tui.reset()
-            }
+        match color_code {
+            0 {}
+            1 { app.tui.set_color(color_blue) }
+            2 { app.tui.set_color(color_yellow) }
+            3 { app.tui.set_color(color_red) }
+            else {}
         }
 
         app.tui.draw_text(0, y, all_lines[i][1..])
@@ -245,12 +197,12 @@ fn frame(a voidptr) {
     // Draw the horizontal divider
     divider_y := content_height - 2 
 
-    if app.ws.get_state() in [.connecting, .open] {
+    if app.ws_chat != unsafe { nil } && app.ws_chat.get_state() in [.connecting, .open] {
         app.tui.set_bg_color(tui.Color{r: 184, g: 195, b: 199})
         app.tui.set_color(color_black)
         app.tui.bold()
         app.tui.draw_line(0, divider_y, window_width-1, divider_y)
-        app.tui.draw_text(2, divider_y, "Connected to ${app.ws.uri}")
+        app.tui.draw_text(2, divider_y, "Connected to ${app.ws_chat.uri}")
     } else {
         app.tui.set_bg_color(color_red)
         app.tui.set_color(color_black)
@@ -304,7 +256,7 @@ fn handle_command(mut app App, input string) {
 			message += '#${g.id} (${g.name}) | '
 		}
 		app.msg_channel <- TermMessage{
-			label: '[ ${time.now().hhmm12()}] [ Avaibile Groups at ${app.ws.uri} ]'
+			label: '[ ${time.now().hhmm12()}] [ Avaibile Groups at ${app.uri_chat} ]'
 			message: message
 			header: '\x20'
 		}
@@ -319,7 +271,18 @@ fn handle_command(mut app App, input string) {
             app.tui.clear()
             app.tui.flush()
         }
-    } 
+    }
+    if input.starts_with('/cc wss://') {
+        sp := input.split(' ')
+        if sp.len == 2 {
+            app.uri_chat = sp[1]
+            spawn connect(mut app)
+            app.last_commands << input
+            app.input = ''
+            app.tui.clear()
+            app.tui.flush()
+        }
+    }
     if input == '/exit' {
         app.last_commands << input
         exit(0)
@@ -327,7 +290,9 @@ fn handle_command(mut app App, input string) {
     if input == '/disconnect' {
         app.input = ''
         app.last_commands << input
-        app.ws.close(0, 'Disconnected') or { return }
+        if app.ws_chat != unsafe { nil } {
+            app.ws_chat.close(0, 'Disconnected') or { return }
+        }
     }
     if input == '/connect' {
         app.input = ''
@@ -350,50 +315,4 @@ fn add_message(mut app App, new_message TermMessage) {
     if app.messages.len > app.max_messages {
         app.messages = app.messages[app.messages.len - app.max_messages ..]
     }
-}
-
-fn wrap_text(text string, max_width int) []string {
-    mut lines := []string{}
-    // Split the text into paragraphs based on newlines
-    for paragraph in text.split('\n') {
-        mut current_line := ''
-        for word in paragraph.split(' ') {
-            // Determine if we need to add a space before the word
-            space_needed := if current_line.len > 0 { 1 } else { 0 }
-            if current_line.len + word.len + space_needed <= max_width {
-                if current_line.len > 0 {
-                    current_line += ' '
-                }
-                current_line += word
-            } else {
-                if current_line.len > 0 {
-                    lines << current_line
-                }
-                // Handle words longer than max_width
-                if word.len > max_width {
-                    // Split the word
-                    mut start := 0
-                    for start < word.len {
-                        end := if start + max_width <= word.len { start + max_width } else { word.len }
-                        lines << word[start..end]
-                        start = end
-                    }
-                    current_line = ''
-                } else {
-                    current_line = word
-                }
-            }
-        }
-        // Add the last line of the paragraph
-        if current_line.len > 0 {
-            lines << current_line
-        }
-        // Add an empty line to represent the newline character
-        lines << ''
-    }
-    // Remove the last empty line if it exists
-    if lines.len > 0 && lines.last() == '' {
-        lines = lines[..lines.len - 1].clone()
-    }
-    return lines
 }
