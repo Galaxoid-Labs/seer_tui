@@ -3,6 +3,7 @@ module main
 import net.websocket
 import ismyhc.vnostr
 import time
+import term
 
 struct Group {
 	id   string
@@ -25,11 +26,8 @@ fn connect(mut app App) {
 		}
 	}
 	app.ws_chat = websocket.new_client(app.uri_chat) or {
-		app.msg_channel <- TermMessage{
-			label:   '[ ${time.now().hhmm12()}]'
-			message: '${err.str()}'
-			header:  '\xB0'
-		}
+		app.msg_channel <- TermMessage.new(message: err.str(), 
+        		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 		panic(err)
 	}
 	app.ws_chat.logger.set_level(.disabled)
@@ -38,11 +36,8 @@ fn connect(mut app App) {
 	app.ws_chat.on_error_ref(on_err_callback, app)
 	app.ws_chat.on_message_ref(on_message_callback, app)
 	app.ws_chat.connect() or {
-		app.msg_channel <- TermMessage{
-			label:   '${time.now()}'
-			message: '${err.str()}'
-			header:  '\xB0'
-		}
+		app.msg_channel <- TermMessage.new(message: err.str(), 
+        		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 	}
 	spawn app.ws_chat.listen()
 }
@@ -54,11 +49,8 @@ fn on_open_callback(mut ws websocket.Client, a voidptr) ! {
 		group_list_filter,
 	])
 	ws.write_string(group_list_sub.subscribe()) or {
-		app.msg_channel <- TermMessage{
-			label:   '[ ${time.now().hhmm12()}]'
-			message: '${err.str()}'
-			header:  '\xB0'
-		}
+		app.msg_channel <- TermMessage.new(message: err.str(), 
+        		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 	}
 }
 
@@ -92,10 +84,8 @@ fn on_message_callback(mut ws websocket.Client, msg &websocket.Message, a voidpt
 								app.groups[group_id] = group
 							}
 							u16(9) {
-								app.msg_channel <- TermMessage{
-									label:   '[ ${time.unix(relay_message.event.created_at).local().hhmm()} ] [ ${relay_message.event.pubkey[..8]} ]'
-									message: relay_message.event.content.trim_space()
-								}
+								label := '[ ${time.unix(relay_message.event.created_at).local().hhmm()} ] [ ${relay_message.event.pubkey[..8]} ]'
+								app.msg_channel <- TermMessage.new(label: label, message: relay_message.event.content.trim_space())
 							}
 							else {}
 						}
@@ -106,11 +96,7 @@ fn on_message_callback(mut ws websocket.Client, msg &websocket.Message, a voidpt
 							for _, g in app.groups {
 								message += '#${g.id} (${g.name}) | '
 							}
-							app.msg_channel <- TermMessage{
-								label:   '[ ${time.now().hhmm12()}] [ Avaibile Groups at ${ws.uri} ]'
-								message: message
-								header:  '\x20'
-							}
+        					app.msg_channel <- TermMessage.new(system: true, message: message, label_bold: true)
 						}
 					}
 					else {}
@@ -118,67 +104,48 @@ fn on_message_callback(mut ws websocket.Client, msg &websocket.Message, a voidpt
 			}
 		}
 		.close {
-			app.msg_channel <- TermMessage{
-				label:   '[ ${time.now().hhmm12()}]'
-				message: '${ws.uri} closed'
-				header:  '\x20'
-			}
+        	app.msg_channel <- TermMessage.new(message: '${ws.uri} closed', 
+                                        		label_bold: true, label_color: term.bright_yellow, message_color: term.bright_yellow)
 		}
 		.binary_frame {
-			app.msg_channel <- TermMessage{
-				label:   '[ ${time.now().hhmm12()}]'
-				message: '${ws.uri} binary frame'
-			}
+        	app.msg_channel <- TermMessage.new(message: '${ws.uri} binary frame', 
+                                        		label_bold: true, label_color: term.bright_yellow, message_color: term.bright_yellow)
 		}
 		.ping {}
 		.pong {}
 		else {
-			app.msg_channel <- TermMessage{
-				label:   '[ ${time.now().hhmm12()}]'
-				message: '${msg.opcode}'
-			}
+        	app.msg_channel <- TermMessage.new(message: '${msg.opcode}', 
+                                        		label_bold: true, label_color: term.bright_yellow, message_color: term.bright_yellow)
 		}
 	}
 }
 
 fn on_err_callback(mut ws websocket.Client, err string, a voidptr) ! {
 	mut app := unsafe { &App(a) }
-	app.msg_channel <- TermMessage{
-		label:   '[ ${time.now().hhmm12()}]'
-		message: '${err.str()}'
-		header:  '\x20'
-	}
+	app.msg_channel <- TermMessage.new(message: err.str(), 
+      		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 	spawn connect(mut app) // Try reconnect
 }
 
 fn on_close_callback(mut ws websocket.Client, code int, reason string, a voidptr) ! {
 	mut app := unsafe { &App(a) }
-	app.msg_channel <- TermMessage{
-		label:   '[ ${time.now().hhmm12()}]'
-		message: 'received close from ${ws.uri} ${code} ${reason}'
-		header:  '\x20'
-	}
+	app.msg_channel <- TermMessage.new(message: 'received close from ${ws.uri} ${code} ${reason}', 
+      		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 }
 
 fn subscribe_group(id string, mut app App) {
 	filter := vnostr.VNFilter.new(kinds: [u16(9)], tags: [['#h', id]])
 	sub := vnostr.VNSubscription.new(id: 'group', filters: [filter])
 	app.ws_chat.write_string(sub.subscribe()) or {
-		app.msg_channel <- TermMessage{
-			label:   '[ ${time.now().hhmm12()}]'
-			message: '${err.str()}'
-			header:  '\xB0'
-		}
+		app.msg_channel <- TermMessage.new(message: err.str(), 
+ 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 	}
 }
 
 fn unsubscrib_group(id string, mut app App) {
 	sub := vnostr.VNSubscription.new(id: id)
 	app.ws_chat.write_string(sub.unsubscribe()) or {
-		app.msg_channel <- TermMessage{
-			label:   '[ ${time.now().hhmm12()}]'
-			message: '${err.str()}'
-			header:  '\xB0'
-		}
+		app.msg_channel <- TermMessage.new(message: err.str(), 
+ 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 	}
 }

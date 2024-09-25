@@ -2,7 +2,7 @@ module main
 
 import term.ui as tui
 import net.websocket
-import time
+import term
 
 struct App {
 mut:
@@ -22,6 +22,7 @@ mut:
 
     uri_chat            string 
     ws_chat             &websocket.Client = unsafe { nil }
+    show_title          bool = true
 
     // uri_metadata        string
     // ws_metadata         &websocket.Client = unsafe { nil }
@@ -42,11 +43,10 @@ fn main() {
         frame_rate:     30
     )
 
-    app.msg_channel <- TermMessage{
-        label: '[ ${time.now().hhmm12()}]'
-        message: 'Welcome to seer_tui!! Get started by checking out the commands. Type /help'
-        header: '\x90'
-    }
+    app.msg_channel <- TermMessage.new(system: true, message: 'Welcome to seer_tui!! Get started by checking out the commands. Type /help', 
+                                        label_bold: true, label_color: term.bright_yellow)
+
+    app.tui.set_window_title("seer_tui")
 
     app.tui.run() or { 
         eprintln(err)
@@ -57,20 +57,20 @@ fn main() {
 fn event(e &tui.Event, a voidptr) {
     mut app := unsafe { &App(a) }
     if e.typ == .key_down {
+        app.show_title = false
         match e.code {
             .escape {
-                exit(0) 
+                //exit(0) 
+                // TODO: One escape maybe ask if you want to exit?
+                // Also, could use it to back up.
             }
             .enter {
                 if app.input.starts_with('/') {
                     handle_command(mut app, app.input)
                 } else {
 
-                    app.msg_channel <- TermMessage{
-                        label: '[ ${time.now().hhmm12()}]'
-                        message: app.input.trim_space()
-                        header: '\x90' // Bold green
-                    }
+                    app.msg_channel <- TermMessage.new(message: app.input.trim_space(), 
+                                    label_bold: true, label_color: term.bright_cyan, message_color: term.bright_cyan, message_bold: true)
                     app.input = ''
                 }
 
@@ -79,7 +79,6 @@ fn event(e &tui.Event, a voidptr) {
                 if app.input.len > 0 {
                     app.input = app.input[..app.input.len - 1]
                     app.tui.clear()
-                    // app.tui.flush()
                 }
             }
             else {
@@ -125,6 +124,25 @@ fn frame(a voidptr) {
     window_width := app.tui.window_width
     window_height := app.tui.window_height
 
+    if app.show_title {
+        t := 
+'
+                                                █████                ███ 
+                                               ░░███                ░░░  
+  █████   ██████   ██████  ████████            ███████   █████ ████ ████ 
+ ███░░   ███░░███ ███░░███░░███░░███          ░░░███░   ░░███ ░███ ░░███ 
+░░█████ ░███████ ░███████  ░███ ░░░             ░███     ░███ ░███  ░███ 
+ ░░░░███░███░░░  ░███░░░   ░███                 ░███ ███ ░███ ░███  ░███ 
+ ██████ ░░██████ ░░██████  █████     █████████  ░░█████  ░░████████ █████
+░░░░░░   ░░░░░░   ░░░░░░  ░░░░░     ░░░░░░░░░    ░░░░░    ░░░░░░░░ ░░░░░                                                             
+'
+
+        app.tui.set_color(color_blue)
+        app.tui.draw_text(0, 4, t)
+        app.tui.reset()
+
+    }
+
     // Calculate input area height based on input lines
     mut input_lines := app.input.split('\n')
     app.input_height = input_lines.len
@@ -143,11 +161,23 @@ fn frame(a voidptr) {
     // Prepare wrapped messages
     mut wrapped_messages := [][]string{}
     for msg in app.messages {
-        lines := wrap_text(msg.combined(), window_width)
-        if msg.header == '' {
-            wrapped_messages << lines.map('\x00${it}')
+        mut lines := wrap_text(msg.combined(), window_width)
+        if lines.len > 1 {
+            // We have to re-add the ansci bold/color stuff to the messages since
+            // the wrap text screws it up.
+            for i, _ in lines {
+                if i > 0 {
+                	if message_color := msg.message_color {
+		                lines[i] = term.colorize(message_color, lines[i])
+	                }
+	                if msg.message_bold {
+		                lines[i] = term.bold(lines[i])
+	                }
+                }
+            }
+            wrapped_messages << lines
         } else {
-            wrapped_messages << lines.map('${msg.header}${it}')
+            wrapped_messages << lines
         }
     }
 
@@ -175,41 +205,36 @@ fn frame(a voidptr) {
     // Draw the content area (messages)
     mut y := start_y
     for i in start_line .. total_lines {
-        header := all_lines[i][0]
-        is_bold, color_code := parse_format(header)
-        if is_bold {
-            app.tui.bold()
-        }
-
-        match color_code {
-            0 {}
-            1 { app.tui.set_color(color_blue) }
-            2 { app.tui.set_color(color_yellow) }
-            3 { app.tui.set_color(color_red) }
-            else {}
-        }
-
-        app.tui.draw_text(0, y, all_lines[i][1..])
-        app.tui.reset()
+        app.tui.draw_text(0, y, all_lines[i])
+        app.tui.reset() // ?? Do i need this?
         y++
     }
 
-    // Draw the horizontal divider
-    divider_y := content_height - 2 
+    // Draw top status bar
+    app.tui.draw_text(0, 0, term.bg_blue(' '.repeat(window_width)))
+    app.tui.draw_text(2, 0, term.bg_blue('Welcome to Seer'))
 
-    if app.ws_chat != unsafe { nil } && app.ws_chat.get_state() in [.connecting, .open] {
-        app.tui.set_bg_color(tui.Color{r: 184, g: 195, b: 199})
-        app.tui.set_color(color_black)
-        app.tui.bold()
-        app.tui.draw_line(0, divider_y, window_width-1, divider_y)
-        app.tui.draw_text(2, divider_y, "Connected to ${app.ws_chat.uri}")
-    } else {
-        app.tui.set_bg_color(color_red)
-        app.tui.set_color(color_black)
-        app.tui.bold()
-        app.tui.draw_line(0, divider_y, window_width-1, divider_y)
-        app.tui.draw_text(2, divider_y, "Not connected")
-    }
+    // Draw the bottom bar
+    divider_y := content_height - 2
+    app.tui.draw_text(0, divider_y, term.bg_blue(' '.repeat(window_width)))
+    app.tui.draw_text(2, divider_y, term.bg_blue('You are not connected'))
+
+
+    // mut bg := term.format('Not connected bitch', '44', '49')
+    // bg = term.white(bg)
+    // app.tui.draw_text(0, divider_y, bg)
+
+    // app.tui.set_bg_color(tui.Color{r: 184, g: 195, b: 199})
+    // app.tui.set_color(color_black)
+    // app.tui.bold()
+    // app.tui.draw_line(0, divider_y, window_width-1, divider_y)
+
+    // if app.ws_chat != unsafe { nil } && app.ws_chat.get_state() in [.connecting, .open] {
+    //     app.tui.draw_text(2, divider_y, "Connected to ${app.ws_chat.uri}")
+    // } else {
+    //     app.tui.reset()
+    //     app.tui.draw_text(2, divider_y, term.bright_bg_blue(term.rgb(255, 255, 255, "Not connected")))
+    // }
     app.tui.reset_bg_color()
     app.tui.reset()
 
@@ -255,11 +280,8 @@ fn handle_command(mut app App, input string) {
 		for _, g in app.groups {
 			message += '#${g.id} (${g.name}) | '
 		}
-		app.msg_channel <- TermMessage{
-			label: '[ ${time.now().hhmm12()}] [ Avaibile Groups at ${app.uri_chat} ]'
-			message: message
-			header: '\x20'
-		}
+        app.msg_channel <- TermMessage.new(system: true, message: message, 
+                                        label_bold: true)
     }
     if input.starts_with('/view') {
         sp := input.split(' ')

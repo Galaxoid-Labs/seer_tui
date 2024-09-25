@@ -1,30 +1,66 @@
 module main
+import term.ui as tui
+import term
+import time
 
-// header \x00 - Default: No bold, normal color
-// header \x10 - No bold, green color
-// header \x20 - No bold, yellow color
-// header \x30 - No bold, red color
-// header \x80 - Bold, normal color
-// header \x90 - Bold, green color
-// header \xA0 - Bold, yellow color
-// header \xB0 - Bold, red color
 struct TermMessage {
 mut:
 	label   string
 	message string
-	header  string // Should only be single byte
+	message_color ?fn (string) string
+	message_bold bool
+}
+
+@[params]
+pub struct TermMessageParams {
+pub:
+	system bool
+	error bool
+	label ?string
+	message string
+	label_bold bool
+	label_color ?fn (string) string
+	message_color ?fn (string) string
+	message_bold bool
+}
+
+pub fn TermMessage.new(tmp TermMessageParams) TermMessage {
+	mut label := tmp.label or { '[ ${time.now().hhmm()} ]' }
+	if tmp.system {
+		label = '[ ${time.now().hhmm()} ] [ -!- ]'
+		label = term.colorize(term.bright_yellow, label)
+	}
+
+	if label_color := tmp.label_color {
+		label = term.colorize(label_color, label)
+	} else if tmp.error {
+		label = term.colorize(term.bright_red, label)
+	}
+
+	if tmp.label_bold {
+		label = term.bold(label)
+	}
+
+	mut message := tmp.message
+
+	if message_color := tmp.message_color {
+		message = term.colorize(message_color, message)
+	} else if tmp.error {
+		message = term.colorize(term.bright_red, message)
+	}
+
+	if tmp.message_bold {
+		message = term.bold(message)
+	}
+
+	return TermMessage{
+		label: label,
+		message: message
+		message_color: tmp.message_color
+		message_bold: tmp.message_bold
+	}
 }
 
 fn (tm TermMessage) combined() string {
 	return '${tm.label} ${tm.message}'
-}
-
-fn (tm TermMessage) combined_with_header() string {
-	return '${tm.header}${tm.label} ${tm.message}'
-}
-
-fn parse_format(header u8) (bool, int) {
-	is_bold := (header & 0b10000000) != 0
-	color_code := (header & 0b01110000) >> 4
-	return is_bold, color_code
 }
