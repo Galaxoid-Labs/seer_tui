@@ -2,7 +2,6 @@ module main
 
 import ismyhc.vnostr
 import term.ui as tui
-import net.websocket
 import term
 import os
 
@@ -10,11 +9,9 @@ struct App {
 mut:
     tui                 &tui.Context = unsafe { nil }
 
+    show_title          bool = true
     input               string
     input_height        int = 1
-
-    groups              map[string]Group
-    current_group_id    string
 
     messages            []TermMessage
     msg_channel         chan TermMessage
@@ -22,14 +19,9 @@ mut:
 
     last_commands       []string
 
-    uri_chat            string 
-    ws_chat             &websocket.Client = unsafe { nil }
-    show_title          bool = true
+    chat_ws             ChatWsConnection
 
     pk                  ?vnostr.VNKeyPair
-
-    // uri_metadata        string
-    // ws_metadata         &websocket.Client = unsafe { nil }
 }
 
 const commands = {
@@ -49,6 +41,7 @@ const commands = {
 fn main() {
     mut app := &App{
         last_commands: []string{}
+        chat_ws: ChatWsConnection.new('')
     }
 
     app.msg_channel = chan TermMessage{cap: 100}
@@ -102,12 +95,12 @@ fn event(e &tui.Event, a voidptr) {
                     // if pk := app.pk {
                     //     prompt = '(${pk.public_key_hex[..8]}) > '
                     // }  
-                    if app.pk != none && app.current_group_id != '' {
+                    if app.pk != none && app.chat_ws.selected_group != none {
                         message := app.input.clone()
                         app.input = ''
                         app.tui.clear()
                         app.tui.flush()
-                        send_message(mut app, message)
+                        app.chat_ws.send_message(mut app, message)
                     } else {
                         app.msg_channel <- TermMessage.new(message: app.input.trim_space(), label_color: term.bright_cyan, 
                                                             message_color: term.bright_cyan)
@@ -257,12 +250,12 @@ fn frame(a voidptr) {
     // Draw the bottom bar
     mut bottom_status := ''
 
-    if app.ws_chat != unsafe { nil } {
-        bottom_status += '${app.ws_chat.uri}'
+    if app.chat_ws.ws != unsafe { nil } {
+        bottom_status += '${app.chat_ws.uri}'
     }
 
-    if g := app.groups[app.current_group_id]  {
-        bottom_status += ' (#${g.id}) ${g.name}'
+    if selected_group := app.chat_ws.selected_group {
+        bottom_status += ' (#${selected_group.id}) ${selected_group.name}'
     }
 
     divider_y := content_height - 2
@@ -349,13 +342,13 @@ fn execute_command(mut app App, command string, arg string) {
             app.messages = []
         }
         '/home' {
-            if app.current_group_id == '' {
+            if app.chat_ws.selected_group == none {
                 return
             }
             app.messages = []
-            unsubscrib_group(mut app)
-            app.current_group_id = ''
-            list_groups(mut app)
+            app.chat_ws.unsubscrib_group(mut app)
+            //app.current_group_id = ''
+            app.chat_ws.list_groups(mut app)
         }
         '/connect ' {
 
@@ -373,12 +366,12 @@ fn execute_command(mut app App, command string, arg string) {
                 return
             }
 
-            app.uri_chat = uri
-            spawn connect(mut app)
+            app.chat_ws.uri = uri
+            app.chat_ws.connect(mut app) // TODO: Myight need spawn here
         }
         '/reconnect' {
-            if app.uri_chat != '' {
-                spawn connect(mut app)
+            if app.chat_ws.uri != '' {
+                app.chat_ws.connect(mut app) // TODO: Might need spawn here
             }
         }
         '/join' {
@@ -391,22 +384,22 @@ fn execute_command(mut app App, command string, arg string) {
             exit(0)
         }
         '/view ' {
-            if arg == app.current_group_id {
-                return
+            if selected_group := app.chat_ws.selected_group {
+                if arg == selected_group.id {
+                    return
+                }
             }
 
-            app.current_group_id = arg
-            if group := app.groups[arg] {
-                app.current_group_id = group.id
-                subscribe_group(mut app)
-
+            if group := app.chat_ws.groups[arg] {
+                app.chat_ws.selected_group = group
+                app.chat_ws.subscribe_group(mut app)
                 app.messages = []
                 app.msg_channel <- TermMessage.new(system: true, message: 'Viewing (#${group.id}) | ${group.name}')
-
             }
+
         }
         '/listg' {
-            list_groups(mut app)
+            app.chat_ws.list_groups(mut app)
         }
         '/listu' {
             println('Listing users...')
@@ -416,75 +409,6 @@ fn execute_command(mut app App, command string, arg string) {
         }
     }
 }
-
-// fn handle_command(mut app App, input string) {
-
-//     match input.
-
-
-
-
-//         unsubscrib_group(app.current_group_id, mut app)
-//         app.current_group_id = ''
-//         app.last_commands << input
-//         app.input = ''
-//         app.tui.clear()
-//         app.tui.flush()
-//         mut message := ''
-// 		for _, g in app.groups {
-// 			message += '#${g.id} (${g.name}) | '
-// 		}
-//         app.msg_channel <- TermMessage.new(system: true, message: message, 
-//                                         label_bold: true)
-//     }
-//     if input.starts_with('/view') {
-//         sp := input.split(' ')
-//         if sp.len == 2 {
-//             subscribe_group(sp[1], mut app)
-//             app.current_group_id = sp[1]
-//             app.last_commands << input
-//             app.input = ''
-//             app.tui.clear()
-//             app.tui.flush()
-//         }
-//     }
-//     if input.starts_with('/cc wss://') {
-//         sp := input.split(' ')
-//         if sp.len == 2 {
-//             app.uri_chat = sp[1]
-//             spawn connect(mut app)
-//             app.last_commands << input
-//             app.input = ''
-//             app.tui.clear()
-//             app.tui.flush()
-//         }
-//     }
-//     if input == '/exit' {
-//         app.last_commands << input
-//         exit(0)
-//     }
-//     if input == '/disconnect' {
-//         app.input = ''
-//         app.last_commands << input
-//         if app.ws_chat != unsafe { nil } {
-//             app.ws_chat.close(0, 'Disconnected') or { return }
-//         }
-//     }
-//     if input == '/connect' {
-//         app.input = ''
-//         app.last_commands << input
-//         spawn connect(mut app) 
-//         app.tui.clear()
-//         app.tui.flush()
-//     }
-//     if input == '/clear' {
-//         app.input = ''
-//         app.last_commands << input
-//         app.messages = []
-//         app.tui.clear()
-//         app.tui.flush()
-//     }
-// }
 
 fn add_message(mut app App, new_message TermMessage) {
     app.messages << new_message 
