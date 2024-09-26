@@ -1,5 +1,4 @@
 module main
-import term.ui as tui
 import term
 import time
 

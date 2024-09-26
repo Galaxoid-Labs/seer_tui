@@ -1,4 +1,5 @@
 module main
+import net
 
 fn wrap_text(text string, max_width int) []string {
 	mut lines := []string{}
@@ -48,4 +49,56 @@ fn wrap_text(text string, max_width int) []string {
 		lines = lines[..lines.len - 1].clone()
 	}
 	return lines
+}
+
+
+fn is_valid_ws_url(url string) bool {
+    // Check if the URL starts with ws:// or wss://
+    if !(url.starts_with('ws://') || url.starts_with('wss://')) {
+        return false
+    }
+
+    // Split the URL into parts
+    parts := url.split('://')
+    if parts.len != 2 {
+        return false
+    }
+
+    // Check if there's a valid host part
+    host_part := parts[1].split('/')
+    if host_part.len == 0 || host_part[0].len == 0 {
+        return false
+    }
+
+    // Validate the host (IP or domain)
+    host := host_part[0]
+    if !is_valid_host(host) {
+        return false
+    }
+
+    return true
+}
+
+fn is_valid_host(host string) bool {
+    // Check for valid IP address (IPv4 or IPv6) or domain name
+    return is_valid_ipv4(host) || host.contains('.')
+}
+
+fn is_valid_ipv4(ip string) bool {
+    octets := ip.split('.')
+    if octets.len != 4 {
+        return false
+    }
+
+    for octet in octets {
+        if !octet.is_int() {
+            return false
+        }
+        num := octet.int()
+        if num < 0 || num > 255 {
+            return false
+        }
+    }
+
+    return true
 }

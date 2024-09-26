@@ -25,20 +25,23 @@ fn connect(mut app App) {
 			}
 		}
 	}
+
 	app.ws_chat = websocket.new_client(app.uri_chat) or {
 		app.msg_channel <- TermMessage.new(message: err.str(), 
         		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 		panic(err)
 	}
+
 	app.ws_chat.logger.set_level(.disabled)
 	app.ws_chat.on_open_ref(on_open_callback, app)
 	app.ws_chat.on_close_ref(on_close_callback, app)
 	app.ws_chat.on_error_ref(on_err_callback, app)
 	app.ws_chat.on_message_ref(on_message_callback, app)
 	app.ws_chat.connect() or {
-		app.msg_channel <- TermMessage.new(message: err.str(), 
+		app.msg_channel <- TermMessage.new(message: '${err} Try /reconnect', 
         		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 	}
+
 	spawn app.ws_chat.listen()
 }
 
@@ -84,6 +87,15 @@ fn on_message_callback(mut ws websocket.Client, msg &websocket.Message, a voidpt
 								app.groups[group_id] = group
 							}
 							u16(9) {
+								if pk := app.pk {
+									your_public_key := pk.public_key_hex
+									if relay_message.event.pubkey == your_public_key {
+										label := '[ ${time.unix(relay_message.event.created_at).local().hhmm()} ] [ ${relay_message.event.pubkey[..8]} ]'
+										app.msg_channel <- TermMessage.new(label: label, message: relay_message.event.content.trim_space(), label_bold: true,
+																			label_color: term.bright_cyan, message_bold: true, message_color: term.bright_cyan)
+										return
+									}
+								}
 								label := '[ ${time.unix(relay_message.event.created_at).local().hhmm()} ] [ ${relay_message.event.pubkey[..8]} ]'
 								app.msg_channel <- TermMessage.new(label: label, message: relay_message.event.content.trim_space())
 							}
@@ -96,7 +108,7 @@ fn on_message_callback(mut ws websocket.Client, msg &websocket.Message, a voidpt
 							for _, g in app.groups {
 								message += '#${g.id} (${g.name}) | '
 							}
-        					app.msg_channel <- TermMessage.new(system: true, message: message, label_bold: true)
+        					app.msg_channel <- TermMessage.new(system: true, message: message)
 						}
 					}
 					else {}
@@ -133,19 +145,68 @@ fn on_close_callback(mut ws websocket.Client, code int, reason string, a voidptr
       		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
 }
 
-fn subscribe_group(id string, mut app App) {
-	filter := vnostr.VNFilter.new(kinds: [u16(9)], tags: [['#h', id]])
-	sub := vnostr.VNSubscription.new(id: 'group', filters: [filter])
-	app.ws_chat.write_string(sub.subscribe()) or {
-		app.msg_channel <- TermMessage.new(message: err.str(), 
- 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+fn subscribe_group(mut app App) {
+	if app.ws_chat == unsafe { nil } {
+		return
+	}
+	if app.current_group_id != '' {
+		filter := vnostr.VNFilter.new(kinds: [u16(9)], tags: [['#h', app.current_group_id]], limit: 0)
+		sub := vnostr.VNSubscription.new(id: 'group', filters: [filter])
+		app.ws_chat.write_string(sub.subscribe()) or {
+			app.msg_channel <- TermMessage.new(message: err.str(), 
+ 		     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+		}
 	}
 }
 
-fn unsubscrib_group(id string, mut app App) {
-	sub := vnostr.VNSubscription.new(id: id)
-	app.ws_chat.write_string(sub.unsubscribe()) or {
-		app.msg_channel <- TermMessage.new(message: err.str(), 
- 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+fn unsubscrib_group(mut app App) {
+	if app.ws_chat == unsafe { nil } {
+		return
 	}
+	if app.current_group_id != '' {
+		sub := vnostr.VNSubscription.new(id: app.current_group_id)
+		app.ws_chat.write_string(sub.unsubscribe()) or {
+			app.msg_channel <- TermMessage.new(message: err.str(), 
+	 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+		}
+		app.current_group_id = ''
+	}
+}
+
+fn list_groups(mut app App) {
+	mut message := ''
+	for _, g in app.groups {
+		message += '#${g.id} (${g.name}) | '
+	}	
+	app.msg_channel <- TermMessage.new(system: true, message: message)
+}
+
+fn send_message(mut app App, message string) {
+	if app.ws_chat == unsafe { nil } {
+		return
+	}
+	if app.current_group_id != '' {
+		
+		if pk := app.pk {
+			created_at := u64(time.now().local_to_utc().unix())
+			evt := vnostr.VNEvent.new(pubkey: pk.public_key_hex, created_at: created_at, kind: u16(9),
+												tags: [['h', app.current_group_id]], content: message)
+
+			signed_event := evt.sign(pk) or { 
+				app.msg_channel <- TermMessage.new(message: err.str(), 
+	 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+				return
+			}
+
+			app.ws_chat.write_string('["EVENT", ${signed_event.stringify()}]') or  {
+				app.msg_channel <- TermMessage.new(message: err.str(), 
+	 	     		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+				return
+			}
+			//app.msg_channel <- TermMessage.new(message: '${created_at}', 
+	 	 //    		                        	label_bold: true, label_color: term.bright_red, message_color: term.bright_red)
+		}
+
+	}
+
 }
