@@ -12,6 +12,9 @@ mut:
     show_title          bool = true
     input               string
     input_height        int = 1
+    show_spinner        bool
+    spinner_frame       string
+    frame               int
 
     messages            []TermMessage
     msg_channel         chan TermMessage
@@ -23,6 +26,8 @@ mut:
 
     pk                  ?vnostr.VNKeyPair
 }
+
+const spinner_frames = ['|', '|', '/', '/', '-', '-', '\\', '\\']
 
 const commands = {
     '/clear': '/clear : (Clears the screen)',
@@ -64,7 +69,7 @@ fn main() {
         app.pk = pk
 
         if private_key := app.pk {
-            app.msg_channel <- TermMessage.new(system: true, message: 'Successfuly imported\n Public Key: ${private_key.public_key_npub}', 
+            app.msg_channel <- TermMessage.new(system: true, message: 'Successfuly imported ${private_key.public_key_npub}', 
                                             label_bold: true, label_color: term.bright_yellow)
         }
     }
@@ -90,15 +95,14 @@ fn event(e &tui.Event, a voidptr) {
                 if app.input.starts_with('/') {
                     handle_command(mut app, app.input)
                 } else {
-                    if app.pk != none && app.chat_ws.selected_group != none {
+                    if app.pk != none && app.chat_ws.selected_group != none && app.input != '' {
                         message := app.input.clone()
                         app.input = ''
                         app.tui.clear()
                         app.tui.flush()
                         app.chat_ws.send_message(mut app, message)
                     } else {
-                        app.msg_channel <- TermMessage.new(message: app.input.trim_space(), label_color: term.bright_cyan, 
-                                                            message_color: term.bright_cyan)
+                        app.msg_channel <- TermMessage.new(message: app.input.trim_space(), label_color: term.bright_cyan)
                         app.input = ''
                     }
                 }
@@ -133,6 +137,14 @@ fn event(e &tui.Event, a voidptr) {
 
 fn frame(a voidptr) {
     mut app := unsafe { &App(a) }
+
+    if app.show_spinner {
+        app.spinner_frame = spinner_frames[app.frame % spinner_frames.len]
+        app.frame++
+        if app.frame > 8 {
+            app.frame = 0
+        }
+    }
 
     // Receive all available messages from the channel
     for {
@@ -248,12 +260,17 @@ fn frame(a voidptr) {
     }
 
     if selected_group := app.chat_ws.selected_group {
-        bottom_status += ' (#${selected_group.id}) ${selected_group.name}'
+        bottom_status += ' | (${selected_group.id}) | ${selected_group.name}'
     }
 
     divider_y := content_height - 2
     app.tui.draw_text(0, divider_y, term.bg_blue(' '.repeat(window_width)))
-    app.tui.draw_text(2, divider_y, term.bg_blue(bottom_status))
+
+    if app.show_spinner {
+        app.tui.draw_text(2, divider_y, term.bg_blue('${app.spinner_frame} ${bottom_status}'))
+    } else {
+        app.tui.draw_text(2, divider_y, term.bg_blue(bottom_status))
+    }
 
     app.tui.reset_bg_color()
     app.tui.reset()
@@ -327,10 +344,15 @@ fn execute_command(mut app App, command string, arg string) {
     }
     match command {
         '/help' {
+            app.messages = []
+	        app.msg_channel <- TermMessage.new(system: true, message: '-------------------------------')
+	        app.msg_channel <- TermMessage.new(system: true, message: 'Available Commands')
+	        app.msg_channel <- TermMessage.new(system: true, message: '-------------------------------')
             for _, help in commands {
                 app.msg_channel <- TermMessage.new(system: true, message: help, 
                                                     label_bold: true)
             }
+	        app.msg_channel <- TermMessage.new(system: true, message: '-------------------------------')
         }
         '/clear' {
             app.messages = []
@@ -385,7 +407,7 @@ fn execute_command(mut app App, command string, arg string) {
                 app.chat_ws.selected_group = group
                 app.chat_ws.subscribe_group(mut app)
                 app.messages = []
-                app.msg_channel <- TermMessage.new(system: true, message: 'Viewing (#${group.id}) | ${group.name}')
+                app.msg_channel <- TermMessage.new(system: true, message: 'Viewing Group (${group.id}) | ${group.name}')
             }
 
         }
