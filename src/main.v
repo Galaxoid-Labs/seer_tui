@@ -90,6 +90,12 @@ fn event(e &tui.Event, a voidptr) {
                 //exit(0) 
                 // TODO: One escape maybe ask if you want to exit?
                 // Also, could use it to back up.
+                if app.chat_ws.selected_group == none {
+                    return
+                }
+                app.messages = []
+                app.chat_ws.unsubscrib_group(mut app)
+                app.chat_ws.list_groups(mut app)
             }
             .enter {
                 if app.input.starts_with('/') {
@@ -261,6 +267,13 @@ fn frame(a voidptr) {
 
     if selected_group := app.chat_ws.selected_group {
         bottom_status += ' | (${selected_group.id}) | ${selected_group.name}'
+        if pk := app.pk {
+            if app.chat_ws.is_member(selected_group.id, pk.public_key_hex) {
+                bottom_status += ' | (Member)'
+            } else {
+                bottom_status += ' | (Not a member)'
+            }
+        }
     }
 
     divider_y := content_height - 2
@@ -412,6 +425,7 @@ fn execute_command(mut app App, command string, arg string) {
 
         }
         '/listg' {
+            // TODO: Check if we are connected..
             spawn app.chat_ws.list_groups(mut app)
         }
         '/listu' {
