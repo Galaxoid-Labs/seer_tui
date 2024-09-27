@@ -1,5 +1,4 @@
 module main
-import net
 
 fn wrap_text(text string, max_width int) []string {
 	mut lines := []string{}

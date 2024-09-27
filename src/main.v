@@ -80,7 +80,6 @@ fn main() {
 fn event(e &tui.Event, a voidptr) {
     mut app := unsafe { &App(a) }
     if e.typ == .key_down {
-        app.show_title = false
         match e.code {
             .escape {
                 //exit(0) 
@@ -91,10 +90,6 @@ fn event(e &tui.Event, a voidptr) {
                 if app.input.starts_with('/') {
                     handle_command(mut app, app.input)
                 } else {
-
-                    // if pk := app.pk {
-                    //     prompt = '(${pk.public_key_hex[..8]}) > '
-                    // }  
                     if app.pk != none && app.chat_ws.selected_group != none {
                         message := app.input.clone()
                         app.input = ''
@@ -107,7 +102,6 @@ fn event(e &tui.Event, a voidptr) {
                         app.input = ''
                     }
                 }
-
             }
             .backspace {
                 if app.input.len > 0 {
@@ -158,7 +152,7 @@ fn frame(a voidptr) {
     window_height := app.tui.window_height
 
     if app.show_title {
-        t := 
+        mut t := 
 '
                                                 █████                ███ 
                                                ░░███                ░░░  
@@ -169,8 +163,7 @@ fn frame(a voidptr) {
  ██████ ░░██████ ░░██████  █████     █████████  ░░█████  ░░████████ █████
 ░░░░░░   ░░░░░░   ░░░░░░  ░░░░░     ░░░░░░░░░    ░░░░░    ░░░░░░░░ ░░░░░                                                             
 '
-
-        app.tui.set_color(color_blue)
+        t = term.bright_yellow(t)
         app.tui.draw_text(0, 4, t)
         app.tui.reset()
 
@@ -326,6 +319,7 @@ fn handle_command(mut app App, input string) {
 
 fn execute_command(mut app App, command string, arg string) {
     defer {
+        app.show_title = false
         app.last_commands << command
         app.input = ''
         app.tui.clear()
@@ -347,7 +341,6 @@ fn execute_command(mut app App, command string, arg string) {
             }
             app.messages = []
             app.chat_ws.unsubscrib_group(mut app)
-            //app.current_group_id = ''
             app.chat_ws.list_groups(mut app)
         }
         '/connect ' {
@@ -367,12 +360,10 @@ fn execute_command(mut app App, command string, arg string) {
             }
 
             app.chat_ws.uri = uri
-            app.chat_ws.connect(mut app) // TODO: Myight need spawn here
+            spawn connect(mut app)
         }
         '/reconnect' {
-            if app.chat_ws.uri != '' {
-                app.chat_ws.connect(mut app) // TODO: Might need spawn here
-            }
+            spawn connect(mut app)
         }
         '/join' {
             println('Joining: $arg')
@@ -399,7 +390,7 @@ fn execute_command(mut app App, command string, arg string) {
 
         }
         '/listg' {
-            app.chat_ws.list_groups(mut app)
+            spawn app.chat_ws.list_groups(mut app)
         }
         '/listu' {
             println('Listing users...')
@@ -408,6 +399,10 @@ fn execute_command(mut app App, command string, arg string) {
             println('Unknown command executed: $command')
         }
     }
+}
+
+fn connect(mut app App) {
+    app.chat_ws.connect(mut app)
 }
 
 fn add_message(mut app App, new_message TermMessage) {

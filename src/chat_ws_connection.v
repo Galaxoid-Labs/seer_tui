@@ -29,6 +29,7 @@ fn ChatWsConnection.new(uri string) ChatWsConnection {
 
 fn (mut cwc ChatWsConnection) connect(mut app App) {
 	if cwc.uri == '' {
+		app.msg_channel <- TermMessage.new(system: true, message: 'Please connect with /connect <relay_url>')
 		return
 	}
 
