@@ -2,4 +2,4 @@
 
 Still a work in progress
 
-
+https://github.com/Galaxoid-Labs/seer_tui/raw/refs/heads/main/seer_tui.mov
