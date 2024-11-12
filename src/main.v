@@ -36,6 +36,7 @@ const commands = {
 	'/reconnect':   '/reconnect : (Trys reconnecting to the last url)'
 	'/disconnect ': '/disconnect : (Disconnects nip29 server)'
 	'/join ':       '/join <group_id> : (Joins the group as member)'
+	'/join':        '/join : (Joins the group thats being viewed as member)'
 	'/leave':       '/leave <group_id> : (Removes you as a member from the group)'
 	'/quit':        '/quit : (Quits the application)'
 	'/view ':       '/view <group_id> : (Views the group without joining)'
@@ -432,7 +433,34 @@ fn execute_command(mut app App, command string, arg string) {
 			spawn connect(mut app)
 		}
 		'/join' {
-			println('Joining: ${arg}')
+			if _ := app.chat_ws.selected_group {
+				app.chat_ws.join_group(mut app)
+			} else {
+				app.msg_channel <- TermMessage.new(
+					system:     true
+					error:      true
+					message:    'Must be viewing a group to join or pass a group id'
+					label_bold: true
+				)
+			}
+		}
+		'/join ' {
+			if selected_group := app.chat_ws.selected_group {
+				if arg == selected_group.id {
+					return
+				}
+			}
+
+			if group := app.chat_ws.groups[arg] {
+				app.chat_ws.selected_group = group
+				app.chat_ws.join_group(mut app)
+				app.chat_ws.subscribe_group(mut app)
+				app.messages = []
+				app.msg_channel <- TermMessage.new(
+					system:  true
+					message: 'Viewing Group (${group.id}) | ${group.name}'
+				)
+			}
 		}
 		'/quit' {
 			exit(0)

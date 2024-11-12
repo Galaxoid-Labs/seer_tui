@@ -169,11 +169,11 @@ fn (mut cwc ChatWsConnection) on_message_callback(mut ws websocket.Client, msg &
 								}
 							}
 							u16(9000), u16(9001) {
-								label := '[ ${relay_message.event.kind} ${time.unix(relay_message.event.created_at).local().hhmm()} ] [ ${relay_message.event.pubkey[..8]} ]'
-								app.msg_channel <- TermMessage.new(
-									label:   label
-									message: relay_message.event.str()
-								)
+								// label := '[ ${relay_message.event.kind} ${time.unix(relay_message.event.created_at).local().hhmm()} ] [ ${relay_message.event.pubkey[..8]} ]'
+								// app.msg_channel <- TermMessage.new(
+								// 	label:   label
+								// 	message: relay_message.event.str()
+								// )
 								h_tag := relay_message.event.filter_tags_by_name('h')
 								if h_tag.len == 0 || h_tag[0].len < 2 {
 									return
@@ -469,5 +469,45 @@ fn (mut cwc ChatWsConnection) send_message(mut app App, message string) {
 				return
 			}
 		}
+	}
+}
+
+fn (mut cwc ChatWsConnection) join_group(mut app App) {
+	if cwc.ws == unsafe { nil } {
+		return
+	}
+	if group := cwc.selected_group {
+		app.show_spinner = true
+		if pk := app.pk {
+			created_at := u64(time.now().local_to_utc().unix())
+			evt := vnostr.VNEvent.new(
+				pubkey:     pk.public_key_hex
+				created_at: created_at
+				kind:       u16(9021)
+				tags:       [['h', group.id], ['p', pk.public_key_hex]]
+				content:    ''
+			)
+
+			signed_event := evt.sign(pk) or {
+				app.msg_channel <- TermMessage.new(
+					message:       err.str()
+					label_bold:    true
+					label_color:   term.bright_red
+					message_color: term.bright_red
+				)
+				return
+			}
+
+			cwc.ws.write_string(signed_event.event_client_message()) or {
+				app.msg_channel <- TermMessage.new(
+					message:       err.str()
+					label_bold:    true
+					label_color:   term.bright_red
+					message_color: term.bright_red
+				)
+				return
+			}
+		}
+		app.show_spinner = false
 	}
 }
